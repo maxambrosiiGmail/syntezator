@@ -14,6 +14,7 @@
 <title>Клавиши — тренажёр для синтезатора</title>
 <style>
 :root{--bg:#0c0f1c;--panel:#161a31;--line:#2a3050;--text:#e8ebff;--mute:#8d94b8;--acc:#5b8cff;--ok:#3ddc97;--bad:#ff5d6c;--warn:#ffd166}
+[hidden]{display:none!important}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;overflow:hidden}
 #app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:960px;margin:0 auto;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
@@ -75,6 +76,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     <button class="chip" id="midiSnd">Звук с MIDI: выкл</button>
   </div>
   <div id="midiS"></div>
+  <div class="bar" id="micRow" hidden style="padding-top:0;padding-bottom:4px;color:var(--mute);font-size:13px"><span>Чувствительность</span><input type="range" id="micSens" min="1" max="10" value="8" style="flex:1;accent-color:var(--acc)"></div>
   <div id="hint"><span id="hintL"></span><span id="hintR"></span></div>
   <div id="stage">
     <canvas id="cv"></canvas>
@@ -346,7 +348,7 @@ $('#midi').addEventListener('click',async()=>{
 });
 
 /* ---------- микрофон: определение ноты по звуку ---------- */
-let micPending=false, micRms=0, micMeterT=0, micNoise=.002;
+let micPending=false, micRms=0, micMeterT=0, micNoise=.002, micGain=Math.pow(1.5,3);
 let micStream=null, micAn=null, micBuf=null, micTimer=null;
 let micState='idle', micCand=null, micCandN=0, micHeld=null, micHeldAt=0, micDiff=0;
 const rmsHist=[0,0,0,0,0,0];
@@ -363,7 +365,7 @@ function yin(buf,sr){
   const cm=new Float32Array(maxTau+1); cm[0]=1; let run=0;
   for(let tau=1;tau<=maxTau;tau++){ run+=d[tau]; cm[tau]=run?d[tau]*tau/run:1; }
   for(let tau=minTau;tau<maxTau-1;tau++){
-    if(cm[tau]<.2){
+    if(cm[tau]<.25){
       while(tau+1<maxTau-1&&cm[tau+1]<cm[tau]) tau++;
       const a=cm[tau-1], b=cm[tau], c=cm[tau+1], den=a-2*b+c;
       const sh=den?.5*(a-c)/den:0;
@@ -382,10 +384,10 @@ function micTick(){
   micAn.getFloatTimeDomainData(micBuf);
   const N=micBuf.length; let s=0;
   for(let i=N-1024;i<N;i++) s+=micBuf[i]*micBuf[i];
-  const rms=Math.sqrt(s/1024), now=performance.now();
+  const rms=Math.sqrt(s/1024)*micGain, now=performance.now();
   if(rms<micNoise*1.5) micNoise=micNoise*.98+rms*.02; else micNoise*=1.0005;
   micNoise=Math.min(micNoise,.05);
-  const thr=Math.max(.004,micNoise*3+.002);
+  const thr=Math.max(.003,micNoise*3+.002);
   micRms=rms;
   if(now-micMeterT>120){ micMeterT=now; showMic(micState==='held'?micHeld:null); }
   const prev=rmsHist[rmsHist.length-1], mn=Math.min.apply(null,rmsHist);
@@ -410,13 +412,19 @@ function micTick(){
     down('mic',micCand,.8,true); showMic(micCand);
   }
 }
+try{ const v=localStorage.getItem('kb_sens'); if(v) $('#micSens').value=v; }catch(e){}
+micGain=Math.pow(1.5,parseInt($('#micSens').value,10)-5);
+$('#micSens').addEventListener('input',e=>{
+  micGain=Math.pow(1.5,parseInt(e.target.value,10)-5);
+  try{ localStorage.setItem('kb_sens',e.target.value); }catch(_){}
+});
 function stopMic(){
   clearInterval(micTimer);
   if(micStream) micStream.getTracks().forEach(t=>t.stop());
   micStream=null; micPending=false; up('mic'); micState='idle'; micCand=null; micCandN=0;
   try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
   if(silentEl) silentEl.play().catch(()=>{});
-  $('#mic').textContent='Микрофон'; $('#mic').classList.remove('on'); setMidiStatus('');
+  $('#mic').textContent='Микрофон'; $('#mic').classList.remove('on'); $('#micRow').hidden=true; setMidiStatus('');
 }
 $('#mic').addEventListener('click',async()=>{
   if(micStream){ stopMic(); return; }
@@ -435,7 +443,7 @@ $('#mic').addEventListener('click',async()=>{
     micNoise=.002;
     micPending=false;
     micTimer=setInterval(micTick,25);
-    $('#mic').textContent='Микрофон: вкл'; $('#mic').classList.add('on'); showMic(null);
+    $('#mic').textContent='Микрофон: вкл'; $('#mic').classList.add('on'); $('#micRow').hidden=false; showMic(null);
   }catch(err){
     micStream=null; micPending=false;
     try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}

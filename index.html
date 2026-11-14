@@ -160,6 +160,7 @@ function updateGo(){
 let ac=null, master=null;
 let silentEl=null;
 function unlockIOS(){
+  if(micStream||micPending) return;
   try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
   if(silentEl) return;
   try{
@@ -351,6 +352,7 @@ $('#midi').addEventListener('click',async()=>{
 });
 
 /* ---------- микрофон: определение ноты по звуку ---------- */
+let micPending=false;
 let micStream=null, micAn=null, micBuf=null, micTimer=null;
 let micState='idle', micCand=null, micCandN=0, micHeld=null, micHeldAt=0, micDiff=0;
 const rmsHist=[0,0,0,0,0,0];
@@ -409,22 +411,30 @@ function micTick(){
 function stopMic(){
   clearInterval(micTimer);
   if(micStream) micStream.getTracks().forEach(t=>t.stop());
-  micStream=null; up('mic'); micState='idle'; micCand=null; micCandN=0;
+  micStream=null; micPending=false; up('mic'); micState='idle'; micCand=null; micCandN=0;
+  try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+  if(silentEl) silentEl.play().catch(()=>{});
   $('#mic').textContent='Микрофон'; $('#mic').classList.remove('on'); setMidiStatus('');
 }
 $('#mic').addEventListener('click',async()=>{
   if(micStream){ stopMic(); return; }
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ setMidiStatus('Микрофон недоступен в этом браузере.'); return; }
   try{
+    micPending=true;
+    try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
+    if(silentEl) silentEl.pause();
     ensureAudio();
     micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     const src=ac.createMediaStreamSource(micStream);
     micAn=ac.createAnalyser(); micAn.fftSize=4096; micBuf=new Float32Array(4096);
     src.connect(micAn);
+    micPending=false;
     micTimer=setInterval(micTick,25);
     $('#mic').textContent='Микрофон: вкл'; $('#mic').classList.add('on'); showMic(null);
   }catch(err){
-    micStream=null;
+    micStream=null; micPending=false;
+    try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+    if(silentEl) silentEl.play().catch(()=>{});
     setMidiStatus('Нет доступа к микрофону: '+(err&&err.message?err.message:'отказано'));
   }
 });

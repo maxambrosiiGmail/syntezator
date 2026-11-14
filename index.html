@@ -39,6 +39,13 @@ button.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-wei
 #midiS:empty{display:none}
 #stage{position:relative;flex:1;min-height:300px;touch-action:none;user-select:none;-webkit-user-select:none}
 canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+#theory{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;background:#0a0d1a;padding:10px 14px}
+.tcard{max-width:540px;margin:0 auto;padding-bottom:24px}
+.tcard h2{margin:4px 0 8px;font-size:22px}
+.ttag{color:var(--mute);font-size:12px}
+#tBody p,#tBody li{font-size:16px;line-height:1.45;margin:8px 0}
+#tBody ul{padding-left:20px;margin:6px 0}
+.trow{display:flex;justify-content:space-between;gap:8px;margin-top:16px;position:sticky;bottom:0;padding:12px 0 6px;background:linear-gradient(rgba(10,13,26,0),#0a0d1a 35%)}
 #result{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(8,10,20,.72)}
 #result[hidden]{display:none}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(86%,340px);text-align:center}
@@ -51,7 +58,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 <body>
 <div id="app">
   <div class="bar">
-    <select id="song" aria-label="Песня"></select>
+    <select id="song" aria-label="Урок или песня"></select>
     <div class="seg" id="modes">
       <button data-m="watch">Смотреть</button>
       <button data-m="wait" class="on">Ждать</button>
@@ -64,6 +71,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     <label class="tempo">♩ <input type="range" id="tempo" min="30" max="160" step="5" value="80"><b id="tempoV">80</b></label>
   </div>
   <div class="bar">
+    <button class="chip" id="theoryBtn">📖 Теория</button>
     <button class="chip" id="names">До Ре Ми</button>
     <select class="chip" id="sound" aria-label="Звук">
       <option value="piano">Звук: пиано</option>
@@ -80,6 +88,14 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
   <div id="hint"><span id="hintL"></span><span id="hintR"></span></div>
   <div id="stage">
     <canvas id="cv"></canvas>
+    <div id="theory" hidden>
+      <div class="tcard">
+        <div class="ttag" id="tTag"></div>
+        <h2 id="tTitle"></h2>
+        <div id="tBody"></div>
+        <div class="trow"><button id="tPrev">← Назад</button><button id="tNext" class="primary">Дальше</button></div>
+      </div>
+    </div>
     <div id="result" hidden>
       <div class="card">
         <h2 id="rTitle"></h2>
@@ -99,26 +115,140 @@ const $=s=>document.querySelector(s);
 /* ---------- ноты и песни ---------- */
 const NAMES_LAT=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
 const NAMES_RU=['До','До♯','Ре','Ре♯','Ми','Фа','Фа♯','Соль','Соль♯','Ля','Ля♯','Си'];
-const LOW=60, HIGH=84;
+let LOW=60, HIGH=84;
 const BLACK_PC=[1,3,6,8,10];
 function parseNote(n){
   const m=/^([A-G])(#?)(\d)$/.exec(n);
   const base={C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1]];
   return 12*(parseInt(m[3],10)+1)+base+(m[2]?1:0);
 }
-const SONGS=[
- {id:'scale',title:'1. Гамма До мажор',bpm:70,
-  seq:'C4:1 D4:1 E4:1 F4:1 G4:1 A4:1 B4:1 C5:2 B4:1 A4:1 G4:1 F4:1 E4:1 D4:1 C4:2'},
- {id:'buns',title:'2. Hot Cross Buns',bpm:80,
-  seq:'E4:1 D4:1 C4:2 E4:1 D4:1 C4:2 C4:.5 C4:.5 C4:.5 C4:.5 D4:.5 D4:.5 D4:.5 D4:.5 E4:1 D4:1 C4:2'},
- {id:'twinkle',title:'3. Twinkle, Twinkle',bpm:90,
-  seq:'C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2'},
- {id:'jingle',title:'4. Jingle Bells (припев)',bpm:100,
-  seq:'E4:1 E4:1 E4:2 E4:1 E4:1 E4:2 E4:1 G4:1 C4:1.5 D4:.5 E4:4 F4:1 F4:1 F4:1.5 F4:.5 F4:1 E4:1 E4:1 E4:.5 E4:.5 E4:1 D4:1 D4:1 E4:1 D4:2 G4:2'},
- {id:'ode',title:'5. Ода к радости',bpm:100,
-  seq:'E4:1 E4:1 F4:1 G4:1 G4:1 F4:1 E4:1 D4:1 C4:1 C4:1 D4:1 E4:1 E4:1.5 D4:.5 D4:2 E4:1 E4:1 F4:1 G4:1 G4:1 F4:1 E4:1 D4:1 C4:1 C4:1 D4:1 E4:1 D4:1.5 C4:.5 C4:2'},
- {id:'elise',title:'6. Для Элизы (начало)',bpm:55,
-  seq:'E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 G#4:.25 B4:.25 C5:.5 R:.25 E4:.25 E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 C5:.25 B4:.25 A4:1.5'}
+const COL_R='#5b8cff', COL_L='#f59e0b';
+const M=(c,o)=>{ const r={}; for(const k in o) r[k]={t:String(o[k]),c}; return r; };
+function kbSvg(lo,hi,marks){
+  const kw=30, kh=100, whites=[];
+  for(let m=lo;m<=hi;m++) if(!BLACK_PC.includes(m%12)) whites.push(m);
+  const W=whites.length*kw;
+  let o='<svg viewBox="0 0 '+W+' '+(kh+24)+'" width="100%" role="img" style="display:block;margin:10px 0">';
+  whites.forEach((m,i)=>{
+    const mk=marks&&marks[m], cx=i*kw+kw/2;
+    o+='<rect x="'+(i*kw)+'" y="0" width="'+kw+'" height="'+kh+'" fill="'+(mk?mk.c+'55':'#f3f4fb')+'" stroke="#9aa0c0"/>';
+    o+='<text x="'+cx+'" y="'+(kh+16)+'" text-anchor="middle" font-size="11" fill="'+(m%12===0?'#9db8ff':'#8d94b8')+'" font-weight="'+(m%12===0?'700':'400')+'">'+NAMES_RU[m%12]+'</text>';
+    if(mk){
+      o+='<circle cx="'+cx+'" cy="'+(kh-22)+'" r="11" fill="'+mk.c+'"/>';
+      o+='<text x="'+cx+'" y="'+(kh-17)+'" text-anchor="middle" font-size="'+(mk.t.length>1?9:14)+'" font-weight="700" fill="#fff">'+mk.t+'</text>';
+    }
+  });
+  let wi=0;
+  for(let m=lo;m<=hi;m++){
+    if(BLACK_PC.includes(m%12)) o+='<rect x="'+(wi*30-9)+'" y="0" width="18" height="'+(kh*.62)+'" rx="3" fill="#1a1e34"/>';
+    else wi++;
+  }
+  return o+'</svg>';
+}
+function handSvg(){
+  const fin=(x,y,w,h)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(w/2)+'" fill="#2a3050" stroke="#5b8cff" stroke-width="2"/>';
+  const num=(x,y,t)=>'<circle cx="'+x+'" cy="'+y+'" r="11" fill="#5b8cff"/><text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">'+t+'</text>';
+  return '<svg viewBox="0 0 240 165" width="100%" style="display:block;margin:10px auto;max-width:320px" role="img">'
+   +'<rect x="76" y="92" width="140" height="62" rx="24" fill="#2a3050" stroke="#5b8cff" stroke-width="2"/>'
+   +fin(82,26,28,78)+fin(116,10,28,94)+fin(150,24,28,80)+fin(184,48,26,56)
+   +'<rect x="30" y="84" width="28" height="64" rx="14" fill="#2a3050" stroke="#5b8cff" stroke-width="2" transform="rotate(-35 44 116)"/>'
+   +num(96,40,2)+num(130,24,3)+num(164,38,4)+num(197,62,5)+num(28,98,1)
+   +'<text x="146" y="144" text-anchor="middle" font-size="10" fill="#8d94b8">правая рука, вид сверху</text></svg>';
+}
+function rhythmSvg(){
+  const rows=[['Целая',4,'4 счёта'],['Половинная',2,'2 счёта'],['Четвертная',1,'1 счёт'],['Восьмая',.5,'½ счёта']];
+  let o='<svg viewBox="0 0 340 140" width="100%" style="display:block;margin:10px 0" role="img">';
+  rows.forEach((r,i)=>{
+    const y=i*34+4;
+    o+='<text x="0" y="'+(y+18)+'" font-size="13" fill="#e8ebff">'+r[0]+'</text>';
+    o+='<rect x="100" y="'+y+'" width="'+(r[1]*50)+'" height="24" rx="6" fill="#5b8cff"/>';
+    o+='<text x="'+(100+r[1]*50+8)+'" y="'+(y+17)+'" font-size="12" fill="#8d94b8">'+r[2]+'</text>';
+  });
+  return o+'</svg>';
+}
+const LEG='<p><span style="color:#7aa2ff">Синие</span> ноты играет правая рука, <span style="color:#f59e0b">оранжевые</span> — левая.</p>';
+
+const ITEMS=[
+ {id:'posture',g:'Уроки',title:'1. Посадка и руки',bpm:70,seq:'',pages:[
+  {h:'Как сесть',b:`<p>Хорошая посадка — половина успеха: руки не устают, и играть проще.</p>
+<ul><li>Сядь ровно напротив середины клавиатуры, на переднюю половину стула, не откидываясь на спинку.</li>
+<li>Высота: предплечья почти параллельно полу, локти на уровне клавиш. Если ниже — подложи подушку на стул.</li>
+<li>Расстояние: руки свободно достают до клавиш, не тянутся. Локти чуть впереди тела.</li>
+<li>Ноги стоят на полу, плечи опущены и расслаблены.</li></ul>`},
+  {h:'Кисть и пальцы',b:`<ul><li>Кисть на одной линии с предплечьем: не провисает вниз и не задрана вверх.</li>
+<li>Пальцы слегка округлены, как будто держишь небольшое яблоко.</li>
+<li>Играй подушечками пальцев, а не плоскими пальцами. Ногти должны быть короткими.</li>
+<li>Большой палец играет боком, у ногтя, и не ложится на клавишу плашмя.</li>
+<li>Нажимай плавно, не бей по клавишам: вес руки переходит в палец, звук получается ровным.</li>
+<li>Если кисть устала или болит — остановись и потряси руками.</li></ul>`},
+  {h:'Номера пальцев',b:`<p>Пальцы нумеруются одинаково на обеих руках:</p>${handSvg()}
+<p><b>1</b> — большой, <b>2</b> — указательный, <b>3</b> — средний, <b>4</b> — безымянный, <b>5</b> — мизинец.</p>
+<p>В приложении цифра на падающей ноте — это палец, которым её нужно играть.</p>${LEG}`}
+ ]},
+ {id:'keys',g:'Уроки',title:'2. Клавиатура и ноты',bpm:60,seq:'C4:1 E4:1 G4:1 C4:1 G4:1 E4:1 C4:2 D4:1 F4:1 D4:1 E4:1 G4:1 E4:1 C4:2',pages:[
+  {h:'Белые и чёрные клавиши',b:`<p>На клавиатуре повторяется один узор — октава. В нём 7 белых клавиш: <b>До Ре Ми Фа Соль Ля Си</b>, а после Си снова начинается До, но выше.</p>
+<p>Чёрные клавиши идут группами: две, потом три. По этим группам легко ориентироваться.</p>${kbSvg(60,83)}`},
+  {h:'Как найти ноту До',b:`<p><b>До</b> — белая клавиша слева от группы из двух чёрных. Найди её на своём синтезаторе: она есть в каждой октаве.</p>
+<p>Ми и Фа стоят рядом, между ними нет чёрной клавиши. Так же рядом Си и До.</p>${kbSvg(60,71,M(COL_R,{60:'До'}))}
+<p>Начинай с До, которая ближе к середине клавиатуры. В приложении это самая левая клавиша. Любая другая До тоже подойдёт, пока включена «Любая октава».</p>
+<p>В этом упражнении пальцы пока не важны: просто найди ноты по названиям.</p>`}
+ ]},
+ {id:'pos',g:'Уроки',title:'3. Правая рука: позиция «До»',bpm:60,seq:'C4:1:1 D4:1:2 E4:1:3 F4:1:4 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C4:2:1 C4:1:1 D4:1:2 E4:1:3 F4:1:4 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C4:2:1',pages:[
+  {h:'Позиция «До»',b:`<p>Поставь правую руку так, чтобы большой палец (1) лежал на До, а остальные пальцы — на соседних белых клавишах подряд:</p>
+${kbSvg(60,71,M(COL_R,{60:1,62:2,64:3,65:4,67:5}))}
+<p>1 — До, 2 — Ре, 3 — Ми, 4 — Фа, 5 — Соль. У каждого пальца своя клавиша: рука не прыгает, пальцы просто нажимают.</p>`},
+  {h:'Как играть упражнение',b:`<ul><li>Нажимай подушечкой пальца и отпускай клавишу, когда пора играть следующую. Остальные пальцы держи над своими клавишами.</li>
+<li>Смотри на цифру на ноте: это палец. Рука не должна сдвигаться со своего места.</li>
+<li>Режим «Ждать»: приложение ждёт, пока сыграешь правильную ноту. Начни с него. Когда получается без ошибок, переходи на «Играть» — там всё идёт в темп.</li>
+<li>Сначала играй медленно (ползунок темпа), потом ускоряйся.</li></ul>`}
+ ]},
+ {id:'pos2',g:'Уроки',title:'4. Пальцы вразнобой',bpm:60,seq:'C4:1:1 E4:1:3 D4:1:2 F4:1:4 E4:1:3 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C4:2:1',pages:[
+  {h:'Пальцы не по порядку',b:`<p>Теперь пальцы играют не подряд. Так рука привыкает к позиции, а пальцы становятся независимыми.</p>
+<p>Смотри на цифры и на экран, а не на руки. Если ошибся, не торопись: сыграй медленнее.</p>`}
+ ]},
+ {id:'buns',g:'Уроки',title:'5. Первая песня: Hot Cross Buns',bpm:80,seq:'E4:1:3 D4:1:2 C4:2:1 E4:1:3 D4:1:2 C4:2:1 C4:.5:1 C4:.5:1 C4:.5:1 C4:.5:1 D4:.5:2 D4:.5:2 D4:.5:2 D4:.5:2 E4:1:3 D4:1:2 C4:2:1',pages:[
+  {h:'Три пальца',b:`<p>Первая песня играется тремя пальцами: Ми — 3, Ре — 2, До — 1. Руку двигать не нужно.</p>
+<p>Короткие ноты (по полсчёта) в середине играй быстрее и одним и тем же пальцем. Если не получается, снизь темп.</p>`}
+ ]},
+ {id:'ode',g:'Уроки',title:'6. Ода к радости',bpm:100,seq:'E4:1:3 E4:1:3 F4:1:4 G4:1:5 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C4:1:1 C4:1:1 D4:1:2 E4:1:3 E4:1.5:3 D4:.5:2 D4:2:2 E4:1:3 E4:1:3 F4:1:4 G4:1:5 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C4:1:1 C4:1:1 D4:1:2 E4:1:3 D4:1.5:2 C4:.5:1 C4:2:1',pages:[
+  {h:'Вся мелодия в одной позиции',b:`<p>Мелодия Бетховена целиком играется в позиции «До»: руку двигать не нужно.</p>
+<p>В конце фразы длинная нота держится полтора счёта, а следующая короткая — полсчёта. Считай вслух: «раз, два-и».</p>`}
+ ]},
+ {id:'jingle',g:'Уроки',title:'7. Jingle Bells (припев)',bpm:100,seq:'E4:1:3 E4:1:3 E4:2:3 E4:1:3 E4:1:3 E4:2:3 E4:1:3 G4:1:5 C4:1.5:1 D4:.5:2 E4:4:3 F4:1:4 F4:1:4 F4:1.5:4 F4:.5:4 F4:1:4 E4:1:3 E4:1:3 E4:.5:3 E4:.5:3 E4:1:3 D4:1:2 D4:1:2 E4:1:3 D4:2:2 G4:2:5',pages:[
+  {h:'Все пять пальцев',b:`<p>В припеве работают все пять пальцев. Соль играет мизинец (5), а До — большой (1): после Соль рука «падает» на До, следи, чтобы кисть оставалась на месте.</p>
+<p>Фа играй безымянным (4). Самое длинное место — Ми на четыре счёта: держи клавишу и считай до четырёх.</p>`}
+ ]},
+ {id:'rhythm',g:'Уроки',title:'8. Ритм: длинные и короткие ноты',bpm:70,seq:'C4:4:1 D4:2:2 E4:2:3 C4:1:1 D4:1:2 E4:1:3 C4:1:1 C4:.5:1 D4:.5:2 E4:.5:3 D4:.5:2 C4:2:1',pages:[
+  {h:'Длительности нот',b:`<p>Каждая нота длится определённое число счётов (ударов). На экране длинная нота выглядит длиннее.</p>${rhythmSvg()}`},
+  {h:'Как считать',b:`<ul><li>Четвертная — один счёт: нажал на «раз», отпустил на «два».</li>
+<li>Половинная — два счёта: нажал на «раз», держишь «два», отпускаешь на «три».</li>
+<li>Целая — четыре счёта.</li>
+<li>Восьмая — полсчёта: две восьмые умещаются в один счёт, считай «раз-и».</li></ul>
+<p>Считай вслух, пока играешь. Это главный способ играть ровно. В режиме «Играть» приложение оценивает, попал ли ты в начало каждой ноты.</p>`}
+ ]},
+ {id:'left',g:'Уроки',title:'9. Левая рука: позиция «До»',bpm:60,lo:48,seq:'C3:1:5L D3:1:4L E3:1:3L F3:1:2L G3:1:1L F3:1:2L E3:1:3L D3:1:4L C3:2:5L C3:1:5L D3:1:4L E3:1:3L F3:1:2L G3:1:1L F3:1:2L E3:1:3L D3:1:4L C3:2:5L',pages:[
+  {h:'Левая рука',b:`<p>Левая рука играет басы — более низкие ноты. Номера пальцев те же (1 — большой, 5 — мизинец), но положение зеркальное: большой палец справа, мизинец слева.</p>
+<p>Поставь левую руку так: мизинец (5) на До, дальше подряд 4 — Ре, 3 — Ми, 2 — Фа, 1 — Соль.</p>
+${kbSvg(48,59,M(COL_L,{48:5,50:4,52:3,53:2,55:1}))}
+<p>Это До на 7 белых клавиш левее «До первой октавы». В приложении клавиатура сдвигается на октаву ниже, а ноты левой руки оранжевые.</p>`},
+  {h:'Упражнение',b:`<p>Играй вверх 5-4-3-2-1, потом вниз. Левой рукой сначала сложнее: это нормально. Начни в режиме «Ждать» и медленно.</p>`}
+ ]},
+ {id:'leftode',g:'Уроки',title:'10. Левая рука: Ода к радости',bpm:90,lo:48,seq:'E3:1:3L E3:1:3L F3:1:2L G3:1:1L G3:1:1L F3:1:2L E3:1:3L D3:1:4L C3:1:5L C3:1:5L D3:1:4L E3:1:3L E3:1.5:3L D3:.5:4L D3:2:4L E3:1:3L E3:1:3L F3:1:2L G3:1:1L G3:1:1L F3:1:2L E3:1:3L D3:1:4L C3:1:5L C3:1:5L D3:1:4L E3:1:3L D3:1.5:4L C3:.5:5L C3:2:5L',pages:[
+  {h:'Та же мелодия, ниже',b:`<p>Мелодия та же, но в нижней октаве левой рукой. Теперь большой палец (1) на Соль, а мизинец (5) на До.</p>`}
+ ]},
+ {id:'relay',g:'Уроки',title:'11. Руки по очереди',bpm:80,lo:48,seq:'E4:1:3 E4:1:3 F4:1:4 G4:1:5 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C3:1:5L C3:1:5L D3:1:4L E3:1:3L E3:1.5:3L D3:.5:4L D3:2:4L E4:1:3 E4:1:3 F4:1:4 G4:1:5 G4:1:5 F4:1:4 E4:1:3 D4:1:2 C3:1:5L C3:1:5L D3:1:4L E3:1:3L D3:1.5:4L C3:.5:5L C3:2:5L',pages:[
+  {h:'Эстафета',b:`<p>Фразы мелодии играют по очереди: первую — правая рука, ответ — левая.</p>${LEG}
+<p>Смотри на цвет ноты: он подсказывает, какая рука играет сейчас. Пока играет одна рука, вторая отдыхает над своими клавишами. Правая рука играет в верхней октаве, левая — в нижней.</p>`}
+ ]},
+ {id:'scale',g:'Уроки',title:'12. Гамма: подкладывание большого пальца',bpm:60,seq:'C4:1:1 D4:1:2 E4:1:3 F4:1:1 G4:1:2 A4:1:3 B4:1:4 C5:2:5 B4:1:4 A4:1:3 G4:1:2 F4:1:1 E4:1:3 D4:1:2 C4:2:1',pages:[
+  {h:'Подкладывание большого пальца',b:`<p>Гамма — это 8 белых нот подряд. Пяти пальцев на 8 нот не хватает, поэтому после третьего пальца большой проходит под ладонью и берёт следующую ноту. Рука при этом плавно смещается вправо.</p>
+${kbSvg(60,72,M(COL_R,{60:1,62:2,64:3,65:1,67:2,69:3,71:4,72:5}))}`},
+  {h:'Как играть гамму',b:`<ul><li>Вверх: 1 2 3, затем большой подкладывается (1), дальше 2 3 4 5.</li>
+<li>Вниз: 5 4 3 2 1, затем третий палец переходит через большой, дальше 3 2 1.</li>
+<li>Локоть слегка ведёт руку, кисть не дёргается. Играй медленно и ровно.</li></ul>`}
+ ]},
+ {id:'twinkle',g:'Песни (без подсказок пальцев)',title:'Twinkle, Twinkle',bpm:90,seq:'C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2'},
+ {id:'elise',g:'Песни (без подсказок пальцев)',title:'Для Элизы (начало)',bpm:55,seq:'E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 G#4:.25 B4:.25 C5:.5 R:.25 E4:.25 E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 C5:.25 B4:.25 A4:1.5'}
 ];
 
 /* ---------- состояние ---------- */
@@ -130,18 +260,25 @@ const pressed=new Map();   // id -> {voice, disp, m}
 const autoHeld=new Map();  // note -> voice
 const bad=new Map();       // disp midi -> time
 
-function loadSong(i){
+function loadSong(i,withTheory){
   cur=i;
-  const s=SONGS[i]; let t=0; notes=[];
+  const s=ITEMS[i]; let t=0; notes=[];
   for(const tok of s.seq.split(/\s+/)){
-    const [n,d]=tok.split(':'); const dur=parseFloat(d);
-    if(n!=='R') notes.push({m:parseNote(n),s:t,d:dur,st:0});
+    if(!tok) continue;
+    const p=tok.split(':'), dur=parseFloat(p[1]);
+    if(p[0]!=='R'){
+      const fh=p[2]||'';
+      notes.push({m:parseNote(p[0]),s:t,d:dur,st:0,f:fh?parseInt(fh,10):0,h:/L/.test(fh)?'L':'R'});
+    }
     t+=dur;
   }
   endBeat=t; bpm=s.bpm;
+  LOW=s.lo||60; HIGH=LOW+24; layout();
   $('#tempo').value=bpm; $('#tempoV').textContent=bpm;
   $('#song').value=String(i);
+  $('#theoryBtn').hidden=!s.pages;
   reset();
+  if(withTheory&&s.pages) showTheory(0); else $('#theory').hidden=true;
 }
 function reset(){
   releaseAuto();
@@ -242,6 +379,7 @@ function layout(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   kbH=Math.max(90,Math.min(150,H*.28)); fallH=H-kbH;
   ww=W/15; ppb=fallH/5;
+  for(const k in geom) delete geom[k];
   let wi=0; const bw=ww*.62;
   for(let m=LOW;m<=HIGH;m++){
     if(BLACK_PC.includes(m%12)) geom[m]={x:wi*ww-bw/2,w:bw,b:true};
@@ -316,7 +454,7 @@ window.addEventListener('keydown',e=>{
   if(e.repeat||e.ctrlKey||e.metaKey||e.altKey) return;
   const tag=(e.target&&e.target.tagName)||'';
   if(tag==='SELECT'||tag==='INPUT') return;
-  const m=KMAP[e.code]; if(m==null) return;
+  const m0=KMAP[e.code]; if(m0==null) return; const m=m0-60+LOW;
   e.preventDefault(); down('k'+e.code,m,.8);
 });
 window.addEventListener('keyup',e=>{ if(KMAP[e.code]!=null) up('k'+e.code); });
@@ -488,18 +626,18 @@ function finish(){
     title='Готово!';
     stars=wrong===0?3:wrong<=3?2:wrong<=8?1:0;
     text='Ошибок: '+wrong;
-    save(SONGS[cur].id,'wait',-wrong);
+    save(ITEMS[cur].id,'wait',-wrong);
   }else{
     const acc=Math.round(hits/total*100);
     title=acc>=90?'Отлично!':acc>=70?'Хорошо!':'Тренируйтесь дальше';
     stars=acc>=90?3:acc>=70?2:acc>=40?1:0;
     text='Попаданий: '+hits+' из '+total+' ('+acc+'%). Лишних нажатий: '+wrong;
-    save(SONGS[cur].id,'play',acc);
+    save(ITEMS[cur].id,'play',acc);
   }
   $('#rTitle').textContent=title;
   $('#rStars').textContent='★'.repeat(stars)+'☆'.repeat(3-stars);
   $('#rText').textContent=text;
-  $('#nextSong').style.display=cur<SONGS.length-1?'':'none';
+  $('#nextSong').style.display=cur<ITEMS.length-1?'':'none';
   $('#result').hidden=false;
   buildSongList();
 }
@@ -512,14 +650,16 @@ function save(id,m,val){
   }catch(e){}
 }
 function buildSongList(){
-  const b=loadBest(), sel=$('#song');
+  const b=loadBest(), sel=$('#song'), groups={};
   sel.innerHTML='';
-  SONGS.forEach((s,i)=>{
+  ITEMS.forEach((it,i)=>{
+    let og=groups[it.g];
+    if(!og){ og=document.createElement('optgroup'); og.label=it.g; groups[it.g]=og; sel.appendChild(og); }
     const o=document.createElement('option'); o.value=String(i);
-    const r=b[s.id]; let mark='';
+    const r=b[it.id]; let mark='';
     if(r&&r.play!=null) mark=' · '+r.play+'%';
     else if(r&&r.wait!=null) mark=' ✓';
-    o.textContent=s.title+mark; sel.appendChild(o);
+    o.textContent=it.title+mark; og.appendChild(o);
   });
   sel.value=String(cur);
 }
@@ -553,21 +693,29 @@ function draw(){
   // ноты
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,fallH); ctx.clip();
   ctx.font='600 11px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  const active=new Set();
+  const active=new Set(), activeN=new Map();
   for(const n of notes){
     const g=geom[n.m]; if(!g) continue;
     const yb=fallH-(n.s-beat)*ppb, yt=yb-n.d*ppb;
-    if(n.s<=beat&&beat<n.s+n.d&&(mode==='watch'||n.st!==1)&&state!=='idle') active.add(n.m);
+    if(n.s<=beat&&beat<n.s+n.d&&(mode==='watch'||n.st!==1)&&state!=='idle'){ active.add(n.m); activeN.set(n.m,n); }
     if(yb<0||yt>fallH) continue;
     const h=Math.max(6,yb-yt-2);
-    let col=g.b?'#8b5cf6':'#5b8cff', alpha=1;
+    let col=n.h==='L'?(g.b?'#c2410c':'#f59e0b'):(g.b?'#8b5cf6':'#5b8cff'), alpha=1;
     if(n.st===1&&mode!=='watch'){ col='#3ddc97'; alpha=.4; }
     else if(n.st===2){ col='#ff5d6c'; alpha=.45; }
     ctx.globalAlpha=alpha; ctx.fillStyle=col;
     rr(g.x+1.5,yt,g.w-3,h,6); ctx.fill();
     ctx.globalAlpha=1;
-    if(h>=15){
-      const label=nameOf(n.m);
+    const label=nameOf(n.m);
+    if(n.f){
+      ctx.fillStyle='#fff'; ctx.font='700 15px system-ui,sans-serif';
+      ctx.fillText(String(n.f),g.x+g.w/2,yt+Math.min(h/2,11));
+      if(h>=42&&ctx.measureText(label).width<g.w-4){
+        ctx.font='600 10px system-ui,sans-serif'; ctx.fillStyle='rgba(255,255,255,.8)';
+        ctx.fillText(label,g.x+g.w/2,yt+h-9);
+      }
+    }else if(h>=15){
+      ctx.font='600 11px system-ui,sans-serif';
       if(ctx.measureText(label).width<g.w-4){
         ctx.fillStyle='rgba(255,255,255,.92)'; ctx.fillText(label,g.x+g.w/2,yt+Math.min(h/2,9));
       }
@@ -599,6 +747,11 @@ function draw(){
     ctx.strokeStyle='#9aa0c0'; ctx.lineWidth=1; ctx.strokeRect(g.x+.5,fallH+.5,g.w-1,kbH-1);
     ctx.fillStyle='#4a5070'; ctx.font='600 '+(ruNames?9:11)+'px system-ui,sans-serif';
     ctx.fillText(nameOf(m),g.x+g.w/2,fallH+kbH-8);
+    const an=activeN.get(m);
+    if(an&&an.f){
+      ctx.fillStyle=an.h==='L'?'#f59e0b':'#5b8cff'; ctx.beginPath(); ctx.arc(g.x+g.w/2,fallH+kbH-34,11,0,7); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font='700 14px system-ui,sans-serif'; ctx.fillText(String(an.f),g.x+g.w/2,fallH+kbH-29);
+    }
   }
   for(let m=LOW;m<=HIGH;m++){
     const g=geom[m]; if(!g.b) continue;
@@ -606,6 +759,11 @@ function draw(){
     ctx.fillStyle='#1a1e34'; rr(g.x,fallH,g.w,bh,4); ctx.fill();
     const c=keyColor(m,true);
     if(c){ ctx.fillStyle=c; rr(g.x,fallH,g.w,bh,4); ctx.fill(); }
+    const an=activeN.get(m);
+    if(an&&an.f){
+      ctx.fillStyle=an.h==='L'?'#f59e0b':'#5b8cff'; ctx.beginPath(); ctx.arc(g.x+g.w/2,fallH+bh-16,9,0,7); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font='700 12px system-ui,sans-serif'; ctx.textAlign='center'; ctx.fillText(String(an.f),g.x+g.w/2,fallH+bh-12);
+    }
   }
   // подсказка
   let l='', r='';
@@ -613,7 +771,7 @@ function draw(){
   else if(state==='pause') l='Пауза';
   else if(state==='done') l=mode==='watch'?'Готово':'Песня закончена';
   else if(beat<0) l=mode==='wait'?'Приготовьтесь…':'Приготовьтесь… '+Math.ceil(-beat);
-  else if(mode==='wait'){ const n=notes[nextIdx]; l=n?((waiting?'Сыграйте: ':'Следующая: ')+nameOf(n.m)):''; }
+  else if(mode==='wait'){ const n=notes[nextIdx]; l=n?((waiting?'Сыграйте: ':'Следующая: ')+nameOf(n.m)+(n.f?' · палец '+n.f+(n.h==='L'?' левой':' правой'):'')):''; }
   else if(mode==='play') l='Играйте в такт';
   else l='Слушайте и смотрите';
   if(mode!=='watch') r='✓ '+hits+'/'+notes.length+'  ✗ '+wrong;
@@ -630,8 +788,37 @@ function frame(t){
   requestAnimationFrame(frame);
 }
 
+/* ---------- теория ---------- */
+let tPages=null, tIdx=0;
+function showTheory(i){
+  const it=ITEMS[cur]; if(!it.pages) return;
+  tPages=it.pages; tIdx=i||0; renderTheory(); $('#theory').hidden=false;
+}
+function renderTheory(){
+  const p=tPages[tIdx], it=ITEMS[cur];
+  $('#tTag').textContent=it.title+' · '+(tIdx+1)+'/'+tPages.length;
+  $('#tTitle').textContent=p.h;
+  $('#tBody').innerHTML=p.b;
+  $('#tPrev').style.visibility=tIdx?'visible':'hidden';
+  const last=tIdx===tPages.length-1;
+  $('#tNext').textContent=last?(it.seq?'К практике ▶':(cur<ITEMS.length-1?'Следующий урок ▶':'Закрыть')):'Дальше';
+  $('#theory').scrollTop=0;
+}
+$('#tNext').addEventListener('click',()=>{
+  if(tIdx<tPages.length-1){ tIdx++; renderTheory(); return; }
+  $('#theory').hidden=true;
+  if(!ITEMS[cur].seq){
+    save(ITEMS[cur].id,'wait',0);
+    if(cur<ITEMS.length-1) loadSong(cur+1,true);
+    buildSongList();
+  }
+});
+$('#tPrev').addEventListener('click',()=>{ if(tIdx>0){ tIdx--; renderTheory(); } });
+$('#theoryBtn').addEventListener('click',()=>showTheory(0));
+
 /* ---------- интерфейс ---------- */
 $('#go').addEventListener('click',()=>{
+  if(!notes.length){ showTheory(0); return; }
   ensureAudio();
   if(state==='idle'||state==='pause'){ state='run'; }
   else if(state==='run'){ state='pause'; releaseAuto(); }
@@ -639,7 +826,7 @@ $('#go').addEventListener('click',()=>{
   updateGo();
 });
 $('#restart').addEventListener('click',()=>reset());
-$('#song').addEventListener('change',e=>loadSong(parseInt(e.target.value,10)));
+$('#song').addEventListener('change',e=>loadSong(parseInt(e.target.value,10),true));
 $('#modes').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
   mode=b.dataset.m;
@@ -661,13 +848,16 @@ $('#oct').addEventListener('click',()=>{
   $('#oct').classList.toggle('on',anyOct);
 });
 $('#again').addEventListener('click',()=>{ reset(); ensureAudio(); state='run'; updateGo(); });
-$('#nextSong').addEventListener('click',()=>{ loadSong(Math.min(cur+1,SONGS.length-1)); ensureAudio(); state='run'; updateGo(); });
+$('#nextSong').addEventListener('click',()=>{
+  loadSong(Math.min(cur+1,ITEMS.length-1),true);
+  if(!ITEMS[cur].pages){ ensureAudio(); state='run'; updateGo(); }
+});
 
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 buildSongList();
-loadSong(0);
+loadSong(0,true);
 layout();
 requestAnimationFrame(frame);
 })();

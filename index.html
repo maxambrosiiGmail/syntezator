@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0c0f1c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Клавиши">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<title>Клавиши — тренажёр для синтезатора</title>
+<style>
+:root{--bg:#0c0f1c;--panel:#161a31;--line:#2a3050;--text:#e8ebff;--mute:#8d94b8;--acc:#5b8cff;--ok:#3ddc97;--bad:#ff5d6c;--warn:#ffd166}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;position:fixed;inset:0;width:100%}
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:960px;margin:0 auto;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.bar{display:flex;gap:6px;padding:6px 8px;align-items:center;flex-wrap:wrap}
+select,button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-height:38px}
+button{cursor:pointer}
+button:active{transform:scale(.97)}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+#song{flex:1;min-width:140px}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent;padding:8px 10px}
+.seg button.on{background:var(--acc);color:#fff;font-weight:600}
+.tempo{display:flex;align-items:center;gap:6px;flex:1;min-width:150px;color:var(--mute);font-size:14px}
+.tempo input{flex:1;accent-color:var(--acc)}
+.tempo b{color:var(--text);min-width:28px;text-align:right;font-weight:600}
+.chip{font-size:13px;padding:6px 10px;min-height:32px;color:var(--mute)}
+.chip.on{color:var(--text);border-color:var(--acc)}
+#hint{padding:2px 12px 6px;font-size:15px;min-height:26px;color:var(--text);display:flex;justify-content:space-between;gap:8px}
+#hint span:last-child{color:var(--mute);white-space:nowrap}
+#midiS{padding:0 12px 4px;font-size:12px;color:var(--mute);min-height:0}
+#midiS:empty{display:none}
+#stage{position:relative;flex:1;min-height:300px;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+#result{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(8,10,20,.72)}
+#result[hidden]{display:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(86%,340px);text-align:center}
+.card h2{margin:0 0 6px;font-size:20px}
+.stars{font-size:34px;letter-spacing:4px;color:var(--warn);margin:6px 0}
+.card p{margin:4px 0 14px;color:var(--mute);font-size:14px}
+.card .row{display:flex;gap:8px;justify-content:center}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar">
+    <select id="song" aria-label="Песня"></select>
+    <div class="seg" id="modes">
+      <button data-m="watch">Смотреть</button>
+      <button data-m="wait" class="on">Ждать</button>
+      <button data-m="play">Играть</button>
+    </div>
+  </div>
+  <div class="bar">
+    <button id="go" class="primary">▶ Старт</button>
+    <button id="restart" aria-label="Сначала">↺</button>
+    <label class="tempo">♩ <input type="range" id="tempo" min="30" max="160" step="5" value="80"><b id="tempoV">80</b></label>
+  </div>
+  <div class="bar">
+    <button class="chip" id="names">До Ре Ми</button>
+    <select class="chip" id="sound" aria-label="Звук">
+      <option value="piano">Звук: пиано</option>
+      <option value="organ">Звук: орган</option>
+      <option value="synth">Звук: синт</option>
+    </select>
+    <button class="chip on" id="oct">Любая октава: вкл</button>
+    <button class="chip" id="midi">Подключить MIDI</button>
+  </div>
+  <div id="midiS"></div>
+  <div id="hint"><span id="hintL"></span><span id="hintR"></span></div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="result" hidden>
+      <div class="card">
+        <h2 id="rTitle"></h2>
+        <div class="stars" id="rStars"></div>
+        <p id="rText"></p>
+        <div class="row"><button id="again">Ещё раз</button><button id="nextSong" class="primary">Дальше</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(()=>{
+'use strict';
+const $=s=>document.querySelector(s);
+
+/* ---------- ноты и песни ---------- */
+const NAMES_LAT=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+const NAMES_RU=['До','До♯','Ре','Ре♯','Ми','Фа','Фа♯','Соль','Соль♯','Ля','Ля♯','Си'];
+const LOW=60, HIGH=84;
+const BLACK_PC=[1,3,6,8,10];
+function parseNote(n){
+  const m=/^([A-G])(#?)(\d)$/.exec(n);
+  const base={C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1]];
+  return 12*(parseInt(m[3],10)+1)+base+(m[2]?1:0);
+}
+const SONGS=[
+ {id:'scale',title:'1. Гамма До мажор',bpm:70,
+  seq:'C4:1 D4:1 E4:1 F4:1 G4:1 A4:1 B4:1 C5:2 B4:1 A4:1 G4:1 F4:1 E4:1 D4:1 C4:2'},
+ {id:'buns',title:'2. Hot Cross Buns',bpm:80,
+  seq:'E4:1 D4:1 C4:2 E4:1 D4:1 C4:2 C4:.5 C4:.5 C4:.5 C4:.5 D4:.5 D4:.5 D4:.5 D4:.5 E4:1 D4:1 C4:2'},
+ {id:'twinkle',title:'3. Twinkle, Twinkle',bpm:90,
+  seq:'C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 G4:1 G4:1 F4:1 F4:1 E4:1 E4:1 D4:2 C4:1 C4:1 G4:1 G4:1 A4:1 A4:1 G4:2 F4:1 F4:1 E4:1 E4:1 D4:1 D4:1 C4:2'},
+ {id:'jingle',title:'4. Jingle Bells (припев)',bpm:100,
+  seq:'E4:1 E4:1 E4:2 E4:1 E4:1 E4:2 E4:1 G4:1 C4:1.5 D4:.5 E4:4 F4:1 F4:1 F4:1.5 F4:.5 F4:1 E4:1 E4:1 E4:.5 E4:.5 E4:1 D4:1 D4:1 E4:1 D4:2 G4:2'},
+ {id:'ode',title:'5. Ода к радости',bpm:100,
+  seq:'E4:1 E4:1 F4:1 G4:1 G4:1 F4:1 E4:1 D4:1 C4:1 C4:1 D4:1 E4:1 E4:1.5 D4:.5 D4:2 E4:1 E4:1 F4:1 G4:1 G4:1 F4:1 E4:1 D4:1 C4:1 C4:1 D4:1 E4:1 D4:1.5 C4:.5 C4:2'},
+ {id:'elise',title:'6. Для Элизы (начало)',bpm:55,
+  seq:'E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 G#4:.25 B4:.25 C5:.5 R:.25 E4:.25 E5:.25 D#5:.25 E5:.25 D#5:.25 E5:.25 B4:.25 D5:.25 C5:.25 A4:.5 R:.25 C4:.25 E4:.25 A4:.25 B4:.5 R:.25 E4:.25 C5:.25 B4:.25 A4:1.5'}
+];
+
+/* ---------- состояние ---------- */
+let cur=0, notes=[], endBeat=0, bpm=80;
+let mode='wait', state='idle'; // idle | run | pause | done
+let beat=-3, nextIdx=0, hits=0, wrong=0, waiting=false;
+let ruNames=true, anyOct=true;
+const pressed=new Map();   // id -> {voice, disp, m}
+const autoHeld=new Map();  // note -> voice
+const bad=new Map();       // disp midi -> time
+
+function loadSong(i){
+  cur=i;
+  const s=SONGS[i]; let t=0; notes=[];
+  for(const tok of s.seq.split(/\s+/)){
+    const [n,d]=tok.split(':'); const dur=parseFloat(d);
+    if(n!=='R') notes.push({m:parseNote(n),s:t,d:dur,st:0});
+    t+=dur;
+  }
+  endBeat=t; bpm=s.bpm;
+  $('#tempo').value=bpm; $('#tempoV').textContent=bpm;
+  $('#song').value=String(i);
+  reset();
+}
+function reset(){
+  releaseAuto();
+  state='idle'; beat=-3; nextIdx=0; hits=0; wrong=0; waiting=false;
+  for(const n of notes) n.st=0;
+  $('#result').hidden=true;
+  updateGo();
+}
+function releaseAuto(){ for(const v of autoHeld.values()) voiceOff(v); autoHeld.clear(); }
+function updateGo(){
+  const b=$('#go');
+  if(state==='run') b.textContent='⏸ Пауза';
+  else if(state==='pause') b.textContent='▶ Продолжить';
+  else if(state==='done') b.textContent='▶ Заново';
+  else b.textContent='▶ Старт';
+}
+
+/* ---------- звук ---------- */
+let ac=null, master=null;
+let silentEl=null;
+function unlockIOS(){
+  try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+  if(silentEl) return;
+  try{
+    silentEl=new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=');
+    silentEl.loop=true; silentEl.play().catch(()=>{});
+  }catch(e){}
+}
+function ensureAudio(){
+  unlockIOS();
+  if(!ac){
+    const C=window.AudioContext||window.webkitAudioContext;
+    ac=new C();
+    master=ac.createGain(); master.gain.value=.55;
+    const comp=ac.createDynamicsCompressor();
+    master.connect(comp); comp.connect(ac.destination);
+  }
+  if(ac.state==='suspended') ac.resume();
+}
+function voiceOn(m,vel){
+  ensureAudio();
+  vel=vel||.8;
+  const f=440*Math.pow(2,(m-69)/12), t=ac.currentTime, kind=$('#sound').value;
+  const g=ac.createGain(); g.gain.setValueAtTime(0.0001,t);
+  const oscs=[];
+  let dest=g;
+  if(kind==='synth'){
+    const flt=ac.createBiquadFilter(); flt.type='lowpass'; flt.frequency.value=2200; flt.Q.value=3;
+    flt.connect(g); dest=flt;
+  }
+  g.connect(master);
+  const add=(type,freq,level)=>{
+    const o=ac.createOscillator(); o.type=type; o.frequency.value=freq;
+    const og=ac.createGain(); og.gain.value=level;
+    o.connect(og); og.connect(dest); o.start(t); oscs.push(o);
+  };
+  if(kind==='piano'){
+    add('triangle',f,1); add('sine',f*2,.35); add('sine',f*3,.12);
+    g.gain.linearRampToValueAtTime(vel*.5,t+.005);
+    g.gain.setTargetAtTime(vel*.1,t+.01,.9);
+  }else if(kind==='organ'){
+    add('sine',f,1); add('sine',f*2,.5); add('sine',f*3,.25); add('sine',f*4,.12);
+    g.gain.linearRampToValueAtTime(vel*.3,t+.02);
+  }else{
+    add('sawtooth',f,.6); add('square',f*.5,.25);
+    g.gain.linearRampToValueAtTime(vel*.3,t+.01);
+    g.gain.setTargetAtTime(vel*.2,t+.02,.4);
+  }
+  return {g,oscs,kind};
+}
+function voiceOff(v){
+  if(!v||!ac) return;
+  const t=ac.currentTime, rel=v.kind==='piano'?.3:.15;
+  try{
+    v.g.gain.cancelScheduledValues(t);
+    v.g.gain.setValueAtTime(Math.max(v.g.gain.value,.0001),t);
+    v.g.gain.setTargetAtTime(0,t,rel/3);
+    v.oscs.forEach(o=>o.stop(t+rel*2+.1));
+  }catch(e){}
+}
+function click(){
+  if(!ac) ensureAudio();
+  const t=ac.currentTime, o=ac.createOscillator(), g=ac.createGain();
+  o.frequency.value=1200; g.gain.setValueAtTime(.25,t); g.gain.exponentialRampToValueAtTime(.001,t+.05);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+.06);
+}
+
+/* ---------- раскладка и клавиатура ---------- */
+const cv=$('#cv'), ctx=cv.getContext('2d');
+let W=0,H=0,kbH=0,fallH=0,ww=0,ppb=0,dpr=1;
+const geom={};
+function layout(){
+  dpr=window.devicePixelRatio||1;
+  const st=$('#stage'); W=st.clientWidth; H=st.clientHeight;
+  cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  kbH=Math.max(90,Math.min(150,H*.28)); fallH=H-kbH;
+  ww=W/15; ppb=fallH/5;
+  let wi=0; const bw=ww*.62;
+  for(let m=LOW;m<=HIGH;m++){
+    if(BLACK_PC.includes(m%12)) geom[m]={x:wi*ww-bw/2,w:bw,b:true};
+    else{ geom[m]={x:wi*ww,w:ww,b:false}; wi++; }
+  }
+}
+new ResizeObserver(layout).observe($('#stage'));
+window.addEventListener('resize',layout);
+
+function nameOf(m){ return (ruNames?NAMES_RU:NAMES_LAT)[((m%12)+12)%12]; }
+function disp(m){
+  if(m>=LOW&&m<=HIGH) return m;
+  return anyOct?LOW+(m%12):null;
+}
+function keyAt(x,y){
+  const ky=y-fallH; if(ky<0) return null;
+  if(ky<kbH*.62){
+    for(let m=LOW;m<=HIGH;m++){ const g=geom[m]; if(g.b&&x>=g.x&&x<g.x+g.w) return m; }
+  }
+  const wi=Math.max(0,Math.min(14,Math.floor(x/ww)));
+  let c=0;
+  for(let m=LOW;m<=HIGH;m++){ if(!BLACK_PC.includes(m%12)){ if(c===wi) return m; c++; } }
+  return null;
+}
+
+/* ---------- ввод ---------- */
+function match(a,b){ return anyOct?(a%12===b%12):a===b; }
+function down(id,m,vel){
+  if(pressed.has(id)) up(id);
+  const voice=voiceOn(m,vel);
+  pressed.set(id,{voice,disp:disp(m),m});
+  if(state!=='run'||mode==='watch') return;
+  if(mode==='wait'){
+    const n=notes[nextIdx];
+    if(n&&n.s-beat<=1){
+      if(match(n.m,m)){ n.st=1; hits++; nextIdx++; if(nextIdx>=notes.length) setTimeout(finish,350); }
+      else{ wrong++; markBad(m); }
+    }
+  }else{
+    const w=.3*bpm/60; let best=null;
+    for(const n of notes){
+      if(n.st===0&&match(n.m,m)){
+        const d=Math.abs(n.s-beat);
+        if(d<=w&&(!best||d<Math.abs(best.s-beat))) best=n;
+      }
+    }
+    if(best){ best.st=1; hits++; } else if(beat>=-0.5){ wrong++; markBad(m); }
+  }
+}
+function up(id){
+  const p=pressed.get(id); if(!p) return;
+  voiceOff(p.voice); pressed.delete(id);
+}
+function markBad(m){ const d=disp(m); if(d!=null) bad.set(d,performance.now()); }
+
+const held=new Map(); // pointerId -> midi
+cv.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  try{cv.setPointerCapture(e.pointerId);}catch(_){}
+  const r=cv.getBoundingClientRect();
+  const m=keyAt(e.clientX-r.left,e.clientY-r.top);
+  if(m==null) return;
+  held.set(e.pointerId,m); down('p'+e.pointerId,m,.8);
+});
+cv.addEventListener('pointermove',e=>{
+  if(!held.has(e.pointerId)) return;
+  const r=cv.getBoundingClientRect();
+  const m=keyAt(e.clientX-r.left,e.clientY-r.top);
+  if(m==null||m===held.get(e.pointerId)) return;
+  up('p'+e.pointerId); held.set(e.pointerId,m); down('p'+e.pointerId,m,.8);
+});
+const release=e=>{ if(held.has(e.pointerId)){ held.delete(e.pointerId); up('p'+e.pointerId); } };
+cv.addEventListener('pointerup',release);
+cv.addEventListener('pointercancel',release);
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+const KMAP={KeyA:60,KeyW:61,KeyS:62,KeyE:63,KeyD:64,KeyF:65,KeyT:66,KeyG:67,KeyY:68,KeyH:69,KeyU:70,KeyJ:71,KeyK:72,KeyO:73,KeyL:74,KeyP:75,Semicolon:76,Quote:77};
+window.addEventListener('keydown',e=>{
+  if(e.repeat||e.ctrlKey||e.metaKey||e.altKey) return;
+  const tag=(e.target&&e.target.tagName)||'';
+  if(tag==='SELECT'||tag==='INPUT') return;
+  const m=KMAP[e.code]; if(m==null) return;
+  e.preventDefault(); down('k'+e.code,m,.8);
+});
+window.addEventListener('keyup',e=>{ if(KMAP[e.code]!=null) up('k'+e.code); });
+
+/* MIDI */
+function setMidiStatus(t){ $('#midiS').textContent=t; }
+function bindMidi(a){
+  const names=[];
+  for(const i of a.inputs.values()){ i.onmidimessage=onMidi; names.push(i.name); }
+  setMidiStatus(names.length?('MIDI: '+names.join(', ')):'MIDI: устройства не найдены. Подключите синтезатор по USB.');
+}
+function onMidi(e){
+  const st=e.data[0], n=e.data[1], v=e.data[2]||0, cmd=st&0xf0;
+  if(cmd===0x90&&v>0) down('m'+n,n,v/127);
+  else if(cmd===0x80||(cmd===0x90&&v===0)) up('m'+n);
+}
+$('#midi').addEventListener('click',async()=>{
+  if(!navigator.requestMIDIAccess){
+    setMidiStatus('Этот браузер не поддерживает Web MIDI (iPhone/Safari — нет). Нужен Chrome или Edge на компьютере или Android.');
+    return;
+  }
+  try{
+    const a=await navigator.requestMIDIAccess();
+    bindMidi(a); a.onstatechange=()=>bindMidi(a);
+    $('#midi').classList.add('on');
+  }catch(err){
+    setMidiStatus('MIDI недоступен: '+(err&&err.message?err.message:'доступ запрещён'));
+  }
+});
+
+/* ---------- ход песни ---------- */
+function step(dt){
+  const prev=beat;
+  let nb=beat+dt*bpm/60;
+  waiting=false;
+  if(mode==='wait'){
+    const n=notes[nextIdx];
+    if(n&&nb>=n.s){ nb=n.s; waiting=true; }
+  }
+  beat=nb;
+  if(mode!=='wait'&&beat<0&&Math.floor(beat)!==Math.floor(prev)) click();
+  if(mode==='watch'){
+    for(const n of notes){
+      if(!n.st&&n.s<=beat){ n.st=1; autoHeld.set(n,voiceOn(n.m,.8)); }
+    }
+    for(const [n,v] of autoHeld){
+      if(n.s+n.d-.05<=beat){ voiceOff(v); autoHeld.delete(n); }
+    }
+  }else if(mode==='play'){
+    const w=.3*bpm/60;
+    for(const n of notes){
+      if(n.st===0&&n.s+w<beat) n.st=2;
+    }
+  }
+  if(mode!=='wait'&&beat>endBeat+.6) finish();
+}
+function finish(){
+  if(state==='done') return;
+  state='done'; releaseAuto(); updateGo();
+  if(mode==='watch') return;
+  const total=notes.length;
+  let title,stars,text;
+  if(mode==='wait'){
+    title='Готово!';
+    stars=wrong===0?3:wrong<=3?2:wrong<=8?1:0;
+    text='Ошибок: '+wrong;
+    save(SONGS[cur].id,'wait',-wrong);
+  }else{
+    const acc=Math.round(hits/total*100);
+    title=acc>=90?'Отлично!':acc>=70?'Хорошо!':'Тренируйтесь дальше';
+    stars=acc>=90?3:acc>=70?2:acc>=40?1:0;
+    text='Попаданий: '+hits+' из '+total+' ('+acc+'%). Лишних нажатий: '+wrong;
+    save(SONGS[cur].id,'play',acc);
+  }
+  $('#rTitle').textContent=title;
+  $('#rStars').textContent='★'.repeat(stars)+'☆'.repeat(3-stars);
+  $('#rText').textContent=text;
+  $('#nextSong').style.display=cur<SONGS.length-1?'':'none';
+  $('#result').hidden=false;
+  buildSongList();
+}
+function loadBest(){ try{ return JSON.parse(localStorage.getItem('kb_best')||'{}'); }catch(e){ return {}; } }
+function save(id,m,val){
+  try{
+    const b=loadBest(); b[id]=b[id]||{};
+    if(b[id][m]==null||val>b[id][m]) b[id][m]=val;
+    localStorage.setItem('kb_best',JSON.stringify(b));
+  }catch(e){}
+}
+function buildSongList(){
+  const b=loadBest(), sel=$('#song');
+  sel.innerHTML='';
+  SONGS.forEach((s,i)=>{
+    const o=document.createElement('option'); o.value=String(i);
+    const r=b[s.id]; let mark='';
+    if(r&&r.play!=null) mark=' · '+r.play+'%';
+    else if(r&&r.wait!=null) mark=' ✓';
+    o.textContent=s.title+mark; sel.appendChild(o);
+  });
+  sel.value=String(cur);
+}
+
+/* ---------- отрисовка ---------- */
+function rr(x,y,w,h,r){
+  r=Math.min(r,w/2,h/2);
+  ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+function draw(){
+  if(!W) return;
+  const now=performance.now();
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,fallH);
+  bg.addColorStop(0,'#0c0f1c'); bg.addColorStop(1,'#151a38');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,fallH);
+  ctx.lineWidth=1;
+  for(let i=1;i<15;i++){
+    const x=Math.round(i*ww)+.5;
+    ctx.strokeStyle=(i%7===0)?'rgba(255,255,255,.12)':'rgba(255,255,255,.05)';
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,fallH); ctx.stroke();
+  }
+  const b0=Math.floor(beat);
+  for(let b=b0;b<=b0+6;b++){
+    const y=fallH-(b-beat)*ppb; if(y<0||y>fallH) continue;
+    ctx.strokeStyle='rgba(255,255,255,.04)';
+    ctx.beginPath(); ctx.moveTo(0,y+.5); ctx.lineTo(W,y+.5); ctx.stroke();
+  }
+  // ноты
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,fallH); ctx.clip();
+  ctx.font='600 11px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  const active=new Set();
+  for(const n of notes){
+    const g=geom[n.m]; if(!g) continue;
+    const yb=fallH-(n.s-beat)*ppb, yt=yb-n.d*ppb;
+    if(n.s<=beat&&beat<n.s+n.d&&(mode==='watch'||n.st!==1)&&state!=='idle') active.add(n.m);
+    if(yb<0||yt>fallH) continue;
+    const h=Math.max(6,yb-yt-2);
+    let col=g.b?'#8b5cf6':'#5b8cff', alpha=1;
+    if(n.st===1&&mode!=='watch'){ col='#3ddc97'; alpha=.4; }
+    else if(n.st===2){ col='#ff5d6c'; alpha=.45; }
+    ctx.globalAlpha=alpha; ctx.fillStyle=col;
+    rr(g.x+1.5,yt,g.w-3,h,6); ctx.fill();
+    ctx.globalAlpha=1;
+    if(h>=15){
+      const label=nameOf(n.m);
+      if(ctx.measureText(label).width<g.w-4){
+        ctx.fillStyle='rgba(255,255,255,.92)'; ctx.fillText(label,g.x+g.w/2,yt+Math.min(h/2,9));
+      }
+    }
+  }
+  ctx.restore();
+  // линия попадания
+  ctx.fillStyle='rgba(91,140,255,.9)'; ctx.fillRect(0,fallH-2,W,2);
+
+  // клавиатура
+  const pset=new Set();
+  for(const p of pressed.values()) if(p.disp!=null) pset.add(p.disp);
+  const pulse=.55+.45*Math.sin(now/140);
+  const expected=(mode==='wait'&&waiting&&notes[nextIdx])?notes[nextIdx].m:null;
+  const keyColor=(m,black)=>{
+    const bt=bad.get(m);
+    if(bt&&now-bt<450) return 'rgba(255,93,108,'+(1-(now-bt)/450).toFixed(2)+')';
+    if(pset.has(m)) return '#7aa2ff';
+    if(expected===m) return 'rgba(255,209,102,'+pulse.toFixed(2)+')';
+    if(active.has(m)) return black?'#8b5cf6':'#a9c2ff';
+    return null;
+  };
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  for(let m=LOW;m<=HIGH;m++){
+    const g=geom[m]; if(g.b) continue;
+    ctx.fillStyle='#f3f4fb'; ctx.fillRect(g.x,fallH,g.w,kbH);
+    const c=keyColor(m,false);
+    if(c){ ctx.fillStyle=c; ctx.fillRect(g.x,fallH,g.w,kbH); }
+    ctx.strokeStyle='#9aa0c0'; ctx.lineWidth=1; ctx.strokeRect(g.x+.5,fallH+.5,g.w-1,kbH-1);
+    ctx.fillStyle='#4a5070'; ctx.font='600 '+(ruNames?9:11)+'px system-ui,sans-serif';
+    ctx.fillText(nameOf(m),g.x+g.w/2,fallH+kbH-8);
+  }
+  for(let m=LOW;m<=HIGH;m++){
+    const g=geom[m]; if(!g.b) continue;
+    const bh=kbH*.62;
+    ctx.fillStyle='#1a1e34'; rr(g.x,fallH,g.w,bh,4); ctx.fill();
+    const c=keyColor(m,true);
+    if(c){ ctx.fillStyle=c; rr(g.x,fallH,g.w,bh,4); ctx.fill(); }
+  }
+  // подсказка
+  let l='', r='';
+  if(state==='idle') l='Нажмите «Старт». Клавиши можно нажимать и просто так.';
+  else if(state==='pause') l='Пауза';
+  else if(state==='done') l=mode==='watch'?'Готово':'Песня закончена';
+  else if(beat<0) l=mode==='wait'?'Приготовьтесь…':'Приготовьтесь… '+Math.ceil(-beat);
+  else if(mode==='wait'){ const n=notes[nextIdx]; l=n?((waiting?'Сыграйте: ':'Следующая: ')+nameOf(n.m)):''; }
+  else if(mode==='play') l='Играйте в такт';
+  else l='Слушайте и смотрите';
+  if(mode!=='watch') r='✓ '+hits+'/'+notes.length+'  ✗ '+wrong;
+  if(l!==lastL){ $('#hintL').textContent=l; lastL=l; }
+  if(r!==lastR){ $('#hintR').textContent=r; lastR=r; }
+}
+let lastL='', lastR='';
+
+let last=performance.now();
+function frame(t){
+  const dt=Math.min(.05,(t-last)/1000); last=t;
+  if(state==='run') step(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- интерфейс ---------- */
+$('#go').addEventListener('click',()=>{
+  ensureAudio();
+  if(state==='idle'||state==='pause'){ state='run'; }
+  else if(state==='run'){ state='pause'; releaseAuto(); }
+  else if(state==='done'){ reset(); state='run'; }
+  updateGo();
+});
+$('#restart').addEventListener('click',()=>reset());
+$('#song').addEventListener('change',e=>loadSong(parseInt(e.target.value,10)));
+$('#modes').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  mode=b.dataset.m;
+  for(const x of $('#modes').children) x.classList.toggle('on',x===b);
+  reset();
+});
+$('#tempo').addEventListener('input',e=>{ bpm=parseInt(e.target.value,10); $('#tempoV').textContent=bpm; });
+$('#names').addEventListener('click',()=>{
+  ruNames=!ruNames; $('#names').textContent=ruNames?'До Ре Ми':'C D E';
+});
+$('#oct').addEventListener('click',()=>{
+  anyOct=!anyOct;
+  $('#oct').textContent='Любая октава: '+(anyOct?'вкл':'выкл');
+  $('#oct').classList.toggle('on',anyOct);
+});
+$('#again').addEventListener('click',()=>{ reset(); ensureAudio(); state='run'; updateGo(); });
+$('#nextSong').addEventListener('click',()=>{ loadSong(Math.min(cur+1,SONGS.length-1)); ensureAudio(); state='run'; updateGo(); });
+
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+buildSongList();
+loadSong(0);
+layout();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

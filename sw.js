@@ -1,4 +1,4 @@
-const CACHE = 'keys-v3';
+const CACHE = 'keys-v4';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

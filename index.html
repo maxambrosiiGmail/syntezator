@@ -70,6 +70,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     </select>
     <button class="chip on" id="oct">Любая октава: вкл</button>
     <button class="chip" id="midi">Подключить MIDI</button>
+    <button class="chip" id="mic">Микрофон</button>
     <button class="chip" id="midiSnd">Звук с MIDI: выкл</button>
   </div>
   <div id="midiS"></div>
@@ -219,6 +220,7 @@ function voiceOff(v){
   }catch(e){}
 }
 function click(){
+  if(micStream) return;
   if(!ac) ensureAudio();
   const t=ac.currentTime, o=ac.createOscillator(), g=ac.createGain();
   o.frequency.value=1200; g.gain.setValueAtTime(.25,t); g.gain.exponentialRampToValueAtTime(.001,t+.05);
@@ -345,6 +347,85 @@ $('#midi').addEventListener('click',async()=>{
     $('#midi').classList.add('on');
   }catch(err){
     setMidiStatus('MIDI недоступен: '+(err&&err.message?err.message:'доступ запрещён'));
+  }
+});
+
+/* ---------- микрофон: определение ноты по звуку ---------- */
+let micStream=null, micAn=null, micBuf=null, micTimer=null;
+let micState='idle', micCand=null, micCandN=0, micHeld=null, micHeldAt=0, micDiff=0;
+const rmsHist=[0,0,0,0,0,0];
+function yin(buf,sr){
+  const W=1200, maxTau=Math.min(900,Math.floor(sr/65)), minTau=Math.max(2,Math.floor(sr/1500));
+  const start=buf.length-(W+maxTau);
+  if(start<0) return null;
+  const d=new Float32Array(maxTau+1);
+  for(let tau=1;tau<=maxTau;tau++){
+    let sum=0;
+    for(let j=0;j<W;j++){ const x=buf[start+j]-buf[start+j+tau]; sum+=x*x; }
+    d[tau]=sum;
+  }
+  const cm=new Float32Array(maxTau+1); cm[0]=1; let run=0;
+  for(let tau=1;tau<=maxTau;tau++){ run+=d[tau]; cm[tau]=run?d[tau]*tau/run:1; }
+  for(let tau=minTau;tau<maxTau-1;tau++){
+    if(cm[tau]<.15){
+      while(tau+1<maxTau-1&&cm[tau+1]<cm[tau]) tau++;
+      const a=cm[tau-1], b=cm[tau], c=cm[tau+1], den=a-2*b+c;
+      const sh=den?.5*(a-c)/den:0;
+      return sr/(tau+sh);
+    }
+  }
+  return null;
+}
+function freqToMidi(f){ const m=Math.round(69+12*Math.log2(f/440)); return (m>=36&&m<=96)?m:null; }
+function showMic(m){ setMidiStatus('Микрофон: '+(m==null?'слушаю…':'слышу '+nameOf(m))); }
+function micRelease(){ up('mic'); micState='idle'; micCand=null; micCandN=0; micDiff=0; showMic(null); }
+function micTick(){
+  micAn.getFloatTimeDomainData(micBuf);
+  const N=micBuf.length; let s=0;
+  for(let i=N-1024;i<N;i++) s+=micBuf[i]*micBuf[i];
+  const rms=Math.sqrt(s/1024), thr=.012, now=performance.now();
+  const prev=rmsHist[rmsHist.length-1], mn=Math.min.apply(null,rmsHist);
+  rmsHist.push(rms); rmsHist.shift();
+  const onset=rms>thr&&rms>prev*1.4&&rms>mn*1.8;
+  if(micState==='held'){
+    if(rms<thr*.6){ micRelease(); return; }
+    if(onset&&now-micHeldAt>150){ micRelease(); }
+    else{
+      const f=yin(micBuf,ac.sampleRate), m=f?freqToMidi(f):null;
+      if(m!=null&&m%12!==micHeld%12){ if(++micDiff>=4){ micRelease(); micCand=m; micCandN=1; } }
+      else micDiff=0;
+      return;
+    }
+  }
+  if(rms<thr){ micCand=null; micCandN=0; return; }
+  const f=yin(micBuf,ac.sampleRate), m=f?freqToMidi(f):null;
+  if(m==null){ micCandN=0; return; }
+  if(micCand!=null&&m%12===micCand%12) micCandN++; else{ micCand=m; micCandN=1; }
+  if(micCandN>=3){
+    micHeld=micCand; micHeldAt=now; micState='held'; micDiff=0;
+    down('mic',micCand,.8,true); showMic(micCand);
+  }
+}
+function stopMic(){
+  clearInterval(micTimer);
+  if(micStream) micStream.getTracks().forEach(t=>t.stop());
+  micStream=null; up('mic'); micState='idle'; micCand=null; micCandN=0;
+  $('#mic').textContent='Микрофон'; $('#mic').classList.remove('on'); setMidiStatus('');
+}
+$('#mic').addEventListener('click',async()=>{
+  if(micStream){ stopMic(); return; }
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ setMidiStatus('Микрофон недоступен в этом браузере.'); return; }
+  try{
+    ensureAudio();
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    const src=ac.createMediaStreamSource(micStream);
+    micAn=ac.createAnalyser(); micAn.fftSize=4096; micBuf=new Float32Array(4096);
+    src.connect(micAn);
+    micTimer=setInterval(micTick,25);
+    $('#mic').textContent='Микрофон: вкл'; $('#mic').classList.add('on'); showMic(null);
+  }catch(err){
+    micStream=null;
+    setMidiStatus('Нет доступа к микрофону: '+(err&&err.message?err.message:'отказано'));
   }
 });
 

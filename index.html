@@ -346,7 +346,7 @@ $('#midi').addEventListener('click',async()=>{
 });
 
 /* ---------- микрофон: определение ноты по звуку ---------- */
-let micPending=false;
+let micPending=false, micRms=0, micMeterT=0, micNoise=.002;
 let micStream=null, micAn=null, micBuf=null, micTimer=null;
 let micState='idle', micCand=null, micCandN=0, micHeld=null, micHeldAt=0, micDiff=0;
 const rmsHist=[0,0,0,0,0,0];
@@ -363,7 +363,7 @@ function yin(buf,sr){
   const cm=new Float32Array(maxTau+1); cm[0]=1; let run=0;
   for(let tau=1;tau<=maxTau;tau++){ run+=d[tau]; cm[tau]=run?d[tau]*tau/run:1; }
   for(let tau=minTau;tau<maxTau-1;tau++){
-    if(cm[tau]<.15){
+    if(cm[tau]<.2){
       while(tau+1<maxTau-1&&cm[tau+1]<cm[tau]) tau++;
       const a=cm[tau-1], b=cm[tau], c=cm[tau+1], den=a-2*b+c;
       const sh=den?.5*(a-c)/den:0;
@@ -373,13 +373,21 @@ function yin(buf,sr){
   return null;
 }
 function freqToMidi(f){ const m=Math.round(69+12*Math.log2(f/440)); return (m>=36&&m<=96)?m:null; }
-function showMic(m){ setMidiStatus('Микрофон: '+(m==null?'слушаю…':'слышу '+nameOf(m))); }
+function showMic(m){
+  const lv=Math.max(0,Math.min(5,Math.round(Math.log10(Math.max(micRms,1e-5)/.0005)*2)));
+  setMidiStatus('Микрофон '+'▮'.repeat(lv)+'▯'.repeat(5-lv)+(m==null?' слушаю…':' слышу '+nameOf(m)));
+}
 function micRelease(){ up('mic'); micState='idle'; micCand=null; micCandN=0; micDiff=0; showMic(null); }
 function micTick(){
   micAn.getFloatTimeDomainData(micBuf);
   const N=micBuf.length; let s=0;
   for(let i=N-1024;i<N;i++) s+=micBuf[i]*micBuf[i];
-  const rms=Math.sqrt(s/1024), thr=.012, now=performance.now();
+  const rms=Math.sqrt(s/1024), now=performance.now();
+  if(rms<micNoise*1.5) micNoise=micNoise*.98+rms*.02; else micNoise*=1.0005;
+  micNoise=Math.min(micNoise,.05);
+  const thr=Math.max(.004,micNoise*3+.002);
+  micRms=rms;
+  if(now-micMeterT>120){ micMeterT=now; showMic(micState==='held'?micHeld:null); }
   const prev=rmsHist[rmsHist.length-1], mn=Math.min.apply(null,rmsHist);
   rmsHist.push(rms); rmsHist.shift();
   const onset=rms>thr&&rms>prev*1.4&&rms>mn*1.8;
@@ -422,6 +430,9 @@ $('#mic').addEventListener('click',async()=>{
     const src=ac.createMediaStreamSource(micStream);
     micAn=ac.createAnalyser(); micAn.fftSize=4096; micBuf=new Float32Array(4096);
     src.connect(micAn);
+    const z=ac.createGain(); z.gain.value=0; micAn.connect(z); z.connect(ac.destination);
+    try{ await ac.resume(); }catch(e){}
+    micNoise=.002;
     micPending=false;
     micTimer=setInterval(micTick,25);
     $('#mic').textContent='Микрофон: вкл'; $('#mic').classList.add('on'); showMic(null);

@@ -68,10 +68,12 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
   <div class="bar">
     <button id="go" class="primary">▶ Старт</button>
     <button id="restart" aria-label="Сначала">↺</button>
-    <label class="tempo">♩ <input type="range" id="tempo" min="30" max="160" step="5" value="80"><b id="tempoV">80</b></label>
+    <label class="tempo">♩ <input type="range" id="tempo" min="30" max="240" step="5" value="80"><b id="tempoV">80</b></label>
   </div>
   <div class="bar">
     <button class="chip" id="theoryBtn">📖 Теория</button>
+    <button class="chip" id="midiLoad">📂 Загрузить MIDI</button>
+    <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
     <button class="chip" id="names">До Ре Ми</button>
     <select class="chip" id="sound" aria-label="Звук">
       <option value="piano">Звук: пиано</option>
@@ -263,14 +265,19 @@ const bad=new Map();       // disp midi -> time
 function loadSong(i,withTheory){
   cur=i;
   const s=ITEMS[i]; let t=0; notes=[];
-  for(const tok of s.seq.split(/\s+/)){
-    if(!tok) continue;
-    const p=tok.split(':'), dur=parseFloat(p[1]);
-    if(p[0]!=='R'){
-      const fh=p[2]||'';
-      notes.push({m:parseNote(p[0]),s:t,d:dur,st:0,f:fh?parseInt(fh,10):0,h:/L/.test(fh)?'L':'R'});
+  if(s.notes){
+    notes=s.notes.map(n=>({m:n.m,s:n.s,d:n.d,st:0,f:0,h:n.h}));
+    t=s.end;
+  }else{
+    for(const tok of s.seq.split(/\s+/)){
+      if(!tok) continue;
+      const p=tok.split(':'), dur=parseFloat(p[1]);
+      if(p[0]!=='R'){
+        const fh=p[2]||'';
+        notes.push({m:parseNote(p[0]),s:t,d:dur,st:0,f:fh?parseInt(fh,10):0,h:/L/.test(fh)?'L':'R'});
+      }
+      t+=dur;
     }
-    t+=dur;
   }
   endBeat=t; bpm=s.bpm;
   LOW=s.lo||60; HIGH=LOW+24; layout();
@@ -415,8 +422,15 @@ function down(id,m,vel,silent){
   if(mode==='wait'){
     const n=notes[nextIdx];
     if(n&&n.s-beat<=1){
-      if(match(n.m,m)){ n.st=1; hits++; nextIdx++; if(nextIdx>=notes.length) setTimeout(finish,350); }
-      else{ wrong++; markBad(m); }
+      let hit=null;
+      for(let i=nextIdx;i<notes.length&&notes[i].s-n.s<.05;i++){
+        if(notes[i].st===0&&match(notes[i].m,m)){ hit=notes[i]; break; }
+      }
+      if(hit){
+        hit.st=1; hits++;
+        while(nextIdx<notes.length&&notes[nextIdx].st!==0) nextIdx++;
+        if(nextIdx>=notes.length) setTimeout(finish,350);
+      }else{ wrong++; markBad(m); }
     }
   }else{
     const w=.3*bpm/60; let best=null;
@@ -729,12 +743,16 @@ function draw(){
   const pset=new Set();
   for(const p of pressed.values()) if(p.disp!=null) pset.add(p.disp);
   const pulse=.55+.45*Math.sin(now/140);
-  const expected=(mode==='wait'&&waiting&&notes[nextIdx])?notes[nextIdx].m:null;
+  const expected=new Set();
+  if(mode==='wait'&&waiting&&notes[nextIdx]){
+    const n0=notes[nextIdx];
+    for(let i=nextIdx;i<notes.length&&notes[i].s-n0.s<.05;i++) if(notes[i].st===0) expected.add(notes[i].m);
+  }
   const keyColor=(m,black)=>{
     const bt=bad.get(m);
     if(bt&&now-bt<450) return 'rgba(255,93,108,'+(1-(now-bt)/450).toFixed(2)+')';
     if(pset.has(m)) return '#7aa2ff';
-    if(expected===m) return 'rgba(255,209,102,'+pulse.toFixed(2)+')';
+    if(expected.has(m)) return 'rgba(255,209,102,'+pulse.toFixed(2)+')';
     if(active.has(m)) return black?'#8b5cf6':'#a9c2ff';
     return null;
   };
@@ -788,6 +806,117 @@ function frame(t){
   requestAnimationFrame(frame);
 }
 
+/* ---------- загрузка своего MIDI-файла ---------- */
+let midiPending=null;
+function parseMidi(buf){
+  const d=new DataView(buf); let p=0;
+  const u8=()=>d.getUint8(p++);
+  const vlq=()=>{ let v=0,b; do{ b=u8(); v=(v<<7)|(b&0x7f); }while(b&0x80); return v; };
+  const str=n=>{ let s=''; for(let i=0;i<n;i++) s+=String.fromCharCode(u8()); return s; };
+  if(str(4)!=='MThd') throw new Error('это не MIDI-файл');
+  const hl=d.getUint32(p); p+=4; p+=2;
+  const nt=d.getUint16(p); p+=2;
+  const div=d.getUint16(p); p+=2; p+=hl-6;
+  if(div&0x8000) throw new Error('формат времени не поддерживается');
+  let tempo=null; const tracks=[];
+  for(let i=0;i<nt&&p<d.byteLength;i++){
+    if(str(4)!=='MTrk') throw new Error('повреждённый файл');
+    const tl=d.getUint32(p); p+=4; const end=p+tl;
+    let tick=0, run=0, name=''; const open={}, notes=[];
+    while(p<end){
+      tick+=vlq();
+      let st=d.getUint8(p);
+      if(st<0x80) st=run; else{ p++; if(st<0xF0) run=st; }
+      if(st===0xFF){
+        const type=u8(), l=vlq();
+        if(type===0x51&&l===3&&tempo==null) tempo=(d.getUint8(p)<<16)|(d.getUint8(p+1)<<8)|d.getUint8(p+2);
+        if(type===0x03){ name=''; for(let k=0;k<l;k++) name+=String.fromCharCode(d.getUint8(p+k)); }
+        p+=l;
+      }else if(st===0xF0||st===0xF7){ p+=vlq(); }
+      else{
+        const cmd=st&0xF0, ch=st&0x0F, a=u8();
+        const b=(cmd===0xC0||cmd===0xD0)?0:u8();
+        if(ch===9) continue;
+        const key=ch+':'+a;
+        if(cmd===0x90&&b>0){ if(open[key]==null) open[key]=tick; }
+        else if(cmd===0x80||(cmd===0x90&&b===0)){
+          if(open[key]!=null){ notes.push({m:a,t:open[key],d:tick-open[key]}); delete open[key]; }
+        }
+      }
+    }
+    p=end;
+    if(notes.length) tracks.push({name:name.trim(),notes});
+  }
+  if(!tracks.length) throw new Error('в файле нет нот');
+  return {tracks,div,bpm:60e6/(tempo||500000)};
+}
+function pitchName(m){ return NAMES_RU[m%12]+(Math.floor(m/12)-1); }
+function showMidiDialog(info){
+  midiPending=info;
+  // по умолчанию — дорожка с самой высокой средней нотой среди «крупных» (обычно это мелодия)
+  const maxCount=Math.max.apply(null,info.tracks.map(t=>t.notes.length));
+  let best=0, bestAvg=-1;
+  info.tracks.forEach((t,i)=>{
+    const avg=t.notes.reduce((a,n)=>a+n.m,0)/t.notes.length;
+    if(t.notes.length>=maxCount*.3&&avg>bestAvg){ best=i; bestAvg=avg; }
+  });
+  const opts=info.tracks.map((t,i)=>{
+    const ms=t.notes.map(n=>n.m), lo=Math.min.apply(null,ms), hi=Math.max.apply(null,ms);
+    return '<option value="'+i+'"'+(i===best?' selected':'')+'>'+(t.name||('Дорожка '+(i+1)))+' · '+t.notes.length+' нот · '+pitchName(lo)+'–'+pitchName(hi)+'</option>';
+  }).join('');
+  $('#tTag').textContent='Свой MIDI-файл';
+  $('#tTitle').textContent=info.name;
+  $('#tBody').innerHTML='<p>Выбери дорожку с мелодией. Обычно это та, что выше всех по звучанию.</p>'
+    +'<select id="mTrack" style="width:100%">'+opts+'<option value="all">Все дорожки вместе</option></select>'
+    +'<p><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mMel" checked style="width:20px;height:20px"> Только мелодия (верхняя нота аккорда)</label></p>'
+    +'<p style="color:var(--mute);font-size:14px">Ноты ниже «До первой октавы» будут оранжевыми (левая рука). Если нужны аккорды, сними галочку: тогда в режиме «Ждать» надо сыграть все ноты одновременно, это работает с MIDI-клавиатурой, но не с микрофоном.</p>';
+  $('#tPrev').style.visibility='hidden';
+  $('#tNext').textContent='Начать ▶';
+  $('#theory').hidden=false; $('#theory').scrollTop=0;
+}
+function applyMidi(){
+  const info=midiPending; midiPending=null;
+  const sel=$('#mTrack').value, mel=$('#mMel').checked;
+  $('#theory').hidden=true;
+  let src=[];
+  if(sel==='all') info.tracks.forEach(t=>{ src=src.concat(t.notes); });
+  else src=info.tracks[parseInt(sel,10)].notes.slice();
+  src.sort((a,b)=>a.t-b.t||b.m-a.m);
+  let arr=src.map(n=>({m:n.m,s:n.t/info.div,d:Math.max(.1,n.d/info.div)}));
+  if(mel){
+    const out=[];
+    for(const n of arr){ const last=out[out.length-1]; if(last&&n.s-last.s<.05) continue; out.push(n); }
+    arr=out;
+  }
+  arr=arr.slice(0,1500);
+  if(!arr.length){ setMidiStatus('В выбранной дорожке нет нот'); return; }
+  const t0=arr[0].s; arr.forEach(n=>{ n.s-=t0; });
+  const ps=arr.map(n=>n.m).sort((a,b)=>a-b), med=ps[ps.length>>1];
+  const lo=Math.max(36,Math.min(72,12*Math.round((med-12)/12)));
+  let end=0;
+  arr.forEach(n=>{
+    n.h=n.m<60?'L':'R';
+    let m=n.m; while(m<lo) m+=12; while(m>lo+24) m-=12; n.m=m;
+    end=Math.max(end,n.s+n.d);
+  });
+  const idx=ITEMS.findIndex(x=>x.custom);
+  if(idx>=0) ITEMS.splice(idx,1);
+  ITEMS.push({id:'midi',custom:true,g:'Мой MIDI',title:'MIDI: '+info.name,bpm:Math.max(30,Math.min(240,Math.round(info.bpm))),lo,seq:'',notes:arr,end});
+  buildSongList();
+  loadSong(ITEMS.length-1,false);
+  setMidiStatus('');
+}
+$('#midiLoad').addEventListener('click',()=>$('#midiFile').click());
+$('#midiFile').addEventListener('change',async e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f) return;
+  try{
+    const info=parseMidi(await f.arrayBuffer());
+    info.name=f.name.replace(/\.(mid|midi)$/i,'');
+    showMidiDialog(info);
+  }catch(err){ setMidiStatus('Не удалось прочитать MIDI: '+(err&&err.message?err.message:err)); }
+});
+
 /* ---------- теория ---------- */
 let tPages=null, tIdx=0;
 function showTheory(i){
@@ -805,6 +934,7 @@ function renderTheory(){
   $('#theory').scrollTop=0;
 }
 $('#tNext').addEventListener('click',()=>{
+  if(midiPending){ applyMidi(); return; }
   if(tIdx<tPages.length-1){ tIdx++; renderTheory(); return; }
   $('#theory').hidden=true;
   if(!ITEMS[cur].seq){
@@ -813,7 +943,7 @@ $('#tNext').addEventListener('click',()=>{
     buildSongList();
   }
 });
-$('#tPrev').addEventListener('click',()=>{ if(tIdx>0){ tIdx--; renderTheory(); } });
+$('#tPrev').addEventListener('click',()=>{ if(!midiPending&&tIdx>0){ tIdx--; renderTheory(); } });
 $('#theoryBtn').addEventListener('click',()=>showTheory(0));
 
 /* ---------- интерфейс ---------- */
